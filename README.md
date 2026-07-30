@@ -1,6 +1,7 @@
 # HIMPACT — HIgh-resolution Multilevel Python-based Algorithm for Cyclones' Centroid Tracking
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19695732.svg)](https://doi.org/10.5281/zenodo.19695732)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 **HIMPACT** is a multi-level cyclone tracking tool for atmospheric model output.  
