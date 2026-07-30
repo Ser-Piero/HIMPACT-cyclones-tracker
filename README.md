@@ -1,92 +1,151 @@
-# cyclone_tracker_multilevel
+# HIMPACT — HIgh-resolution Multilevel Python-based Algorithm for Cyclones' Centroid Tracking
 
-**Multi-level cyclone tracking tool for ICON and WRF mesoscale model output**
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19695732.svg)](https://doi.org/10.5281/zenodo.19695732)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![DOI](https://zenodo.org/badge/1217993590.svg)](https://doi.org/10.5281/zenodo.19695732)
-
----
-
-## What it does
-
-`cyclone_tracker_multilevel.py` tracks a Mediterranean (or other basin) cyclone
-through a sequence of model output files.  At each time step it:
-
-1. Searches within a configurable radius around the previous center.
-2. Finds the **centroid** (convex-hull centre of the lowest 5th-percentile
-   points) and the **absolute minimum** of geopotential height (or SLP) at
-   multiple pressure levels simultaneously.
-3. Combines all level-estimates into a single **weighted-mean track**.
-4. Optionally extracts diagnostic variables along the track (SLP, SST, winds,
-   heat fluxes, precipitation, PV, …).
-5. Saves results as CSV files and optionally plots track maps.
-
-Supported model back-ends: **ICON** (xarray + MetPy) and **WRF** (netCDF4 +
-wrf-python).  Switch between them by changing a single line.
+**HIMPACT** is a multi-level cyclone tracking tool for atmospheric model output.  
+It locates a cyclone centre by finding the centroid and minimum of geopotential height
+(or mean sea-level pressure) inside a moving search circle, simultaneously across
+multiple pressure levels, and combines them into a robust weighted-mean track.
 
 ---
 
-## Installation
+## Supported models
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/<your-username>/cyclone_tracker_multilevel.git
-cd cyclone_tracker_multilevel
-
-# 2. Create a virtual environment (optional but recommended)
-python -m venv .venv && source .venv/bin/activate
-
-# 3. Install dependencies
-#    For ICON:
-pip install xarray metpy cartopy shapely scipy pandas matplotlib
-
-#    For WRF (add to the above):
-pip install netCDF4 wrf-python
-```
+| Model | Grid type | Data format | Python back-end |
+|-------|-----------|-------------|-----------------|
+| **ICON** | Unstructured | NetCDF (`_ML_` / `_PL_` files) | `xarray` + `MetPy` |
+| **WRF**  | Structured | NetCDF (`wrfout*` files) | `netCDF4` + `wrf-python` |
+| **MPAS** | Unstructured | NetCDF (`mpasout*` / `diag*` files) | `xarray` + `MetPy` |
+| **ERA5** | Regular lat-lon | GRIB (`.grib` / `.grb`) | `xarray` + `cfgrib` |
 
 ---
 
 ## Quick start
 
-1. Open `cyclone_tracker_multilevel.py`.
-2. In **SECTION 2 – USER CONFIGURATION** (around line 90), set:
-   - `MODEL = "ICON"` or `"WRF"`
-   - `INFOLDERS`, `SIMS`, `OUTFOLDER`
-   - `START_DATE`, `S0LAT`, `S0LON` (initial cyclone position)
-   - `SEARCH_RADIUS_KM` (150 km for Mediterranean, 300 km for Atlantic)
-   - Toggle `EXPORT_VARIABLES` flags as needed
-3. Run: `python cyclone_tracker_multilevel.py`
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/Ser-Piero/HIMPACT-cyclones-tracker.git
+   cd HIMPACT-cyclones-tracker
+   ```
+
+2. **Install dependencies**
+
+   ```bash
+   conda create -n himpact -c conda-forge python=3.10
+   conda activate himpact
+   conda install -c conda-forge numpy pandas matplotlib cartopy scipy metpy xarray netcdf4 cfgrib wrf-python pillow shapely
+   ```
+
+3. **Edit the user configuration** in `HIMPACT_v1_6.py`:
+   - Set `MODEL` (ICON / WRF / MPAS / ERA5)
+   - Fill in `infolder`, `outfolder`
+   - Set `CYCLONE`, `START_DATE`, `S0LAT`, `S0LON`
+   - Choose tracking parameters (`SEARCH_RADIUS_KM`, `INTERP_LEVELS_HPA`, …)
+
+4. **Run**
+
+   ```bash
+   python HIMPACT_v1_6.py
+   ```
 
 ---
 
-## Output files
+## Repository contents
 
-| File | Description |
-|---|---|
-| `<CYCLONE>_<SIM>_track_multivarz_wm.csv` | Weighted-mean track + diagnostics |
-| `<CYCLONE>_<SIM>_track_all_levels.png`   | All-level scatter plot (if `PLOT=True`) |
-| `<CYCLONE>_<SIM>_track_slp.png`          | Mean track coloured by min SLP |
-| `<CYCLONE>_<SIM>_track_<level>_centroid.csv` | Per-level centroid (if `SAVE_ALL_TRACKS=True`) |
-| `slp_check/<CYCLONE>_<SIM>_check_slp_NNNN.png` | Per-timestep debug maps (if `CHECK_PLOTS=True`) |
+| File | Purpose |
+|------|---------|
+| `HIMPACT_v1_6.py` | Main tracking algorithm |
+| `HIMPACT_SENS.py` | Sensitivity-analysis runner (parallel parameter sweep) |
+| `HIMPACT_SENS_EVALUATION.py` | Post-processing: compare sensitivity runs, compute error metrics, produce evaluation figures |
+
+---
+
+## Output
+
+Running `HIMPACT_v1_6.py` produces:
+
+- **`<cyclone>_<model>_<sim>_track_multilevelz.csv`** — weighted-mean track with SLP minimum and optional diagnostic variables
+- **`<cyclone>_<model>_<sim>_track_multilevelz_smooth.csv`** — same track after rolling-mean smoothing
+- **Per-level CSV files** (when `SAVE_ALL_TRACKS = True`) — centroid and minimum at each pressure level
+- **PNG plots** (when `PLOT = True`) — running track preview, final track map with SLP colouring, per-level cloud plot
+
+---
+
+## How the algorithm works
+
+1. At each time step, a circular search mask (radius `SEARCH_RADIUS_KM`) is centred on
+   the cyclone position estimated at the previous step.
+2. Inside the circle, the algorithm isolates the low-value core using the
+   `PERCENTILE_THRESHOLD`-th percentile of the field.
+3. The **centroid** of the convex hull of the core points and the **absolute minimum**
+   are computed at every requested pressure level (plus SLP).
+4. The running centre estimate is updated as the mean across all levels and methods,
+   and the search circle moves with it to the next time step.
+5. After all time steps, a **weighted-mean track** is computed from all per-level
+   centroid and minimum positions (equal weights by default; customisable).
+6. Diagnostic variables (SST, winds, heat fluxes, precipitation, PV, …) can be
+   extracted inside the search circle and appended to the output CSV.
+
+### Key features
+
+- **Robust to noisy pixels** — convex-hull centroid is less sensitive to isolated
+  extremes than a plain minimum
+- **Multi-level** — tracking across pressure levels catches vertical tilts of the
+  cyclone column
+- **Landfall detection** — automatic land/sea classification of the centre location
+  using Natural Earth shapefiles
+- **Smoothing** — optional rolling-mean filter on the final track
+
+---
+
+## Sensitivity analysis
+
+`HIMPACT_SENS.py` launches a parallel parameter sweep over:
+
+- `SEARCH_RADIUS_KM`
+- `INTERP_LEVELS_HPA`
+- `PERCENTILE_THRESHOLD`
+- Tracking mode: centroid-only, minimum-only, or both
+
+Each combination runs as an independent subprocess of `HIMPACT_v1_6.py`.
+The number of parallel workers defaults to (physical CPU cores − 1).
+
+```bash
+python HIMPACT_SENS.py
+```
+
+`HIMPACT_SENS_EVALUATION.py` then reads all `HIMPACT_SENS_*` output folders and
+produces comparison plots and an error-metrics table (mean displacement, RMSE, …)
+against an observation track.
+
+```bash
+# Edit trackfolder, cyclone, model, and obs path inside the script, then:
+python HIMPACT_SENS_EVALUATION.py
+```
 
 ---
 
 ## Citation
 
-If you use this code in a publication, please cite it as:
+If you use HIMPACT in a publication, please cite:
 
-> Serafini P. (2026). *cyclone_tracker_multilevel – Multi-level cyclone
-> tracking for ICON and WRF*. Zenodo.
-> https://doi.org/10.5281/zenodo.19695732
+> Serafini P. (2026). *HIMPACT — HIgh-resolution Multilevel Python-based Algorithm
+> for Cyclones' Centroid Tracking*. Zenodo.
+> [https://doi.org/10.5281/zenodo.19695732](https://doi.org/10.5281/zenodo.19695732)
+
+---
+
+## Author
+
+**Piero Serafini** — PhD student in Atmospheric Physics  
+University of L'Aquila (UNIVAQ) — CETEMPS  
+piero.serafini@graduate.univaq.it
 
 ---
 
 ## License
 
-MIT – see [LICENSE](LICENSE).
-
----
-
-## Authors
-
-- Piero Serafini - PhD student in Atmospheric Physics - University of L'Aquila (UNIVAQ) - Center of Excellence in Telesensing of Environment and Model Prediction of Severe Events (CETEMPS) - Via Vetoio, Edificio Renato Ricamo, L'Aquila (AQ), Italy, 67100 - piero.serafini@graduate.univaq.it
+This project is released under the [MIT License](https://opensource.org/licenses/MIT).  
+See the `LICENSE` file for details.
